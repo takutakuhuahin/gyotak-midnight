@@ -1,0 +1,12 @@
+.env
+.env.*
+node_modules/
+build/
+dist/
+target/
+*.key
+*.prover
+*.verifier
+walletState*
+*-state/
+.DS_Store

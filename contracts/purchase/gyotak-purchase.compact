@@ -1,0 +1,88 @@
+pragma language_version >= 0.22;
+
+import CompactStandardLibrary;
+
+// 購入証明 (gyotak-purchase)
+//
+// 「ロット X を買った人がいる」を、買主の身元を出さずに記録する。
+// gyotak-catch v3 の recordCatch と同じ構造で、違いは 2 点:
+//   1. GPS の範囲証明が無い (購入に座標は無い)
+//   2. コミットする対象が座標ではなく買主の識別子 (buyerId32)
+//
+// チェーンが保証するのは「この記録が block N の時点で存在し、以後書き換えられて
+// いないこと」と「刻印時刻を遡って詐称していないこと」まで。
+struct PurchaseRecord {
+  // 購入 id (平文, Map のキーと同じ値)。
+  purchaseId: Bytes<32>,
+  // persistentCommit<Bytes<32>>(buyerId32, nonce)
+  //   = SHA-256(nonce ‖ buyerId32)   ※ D1 側 purchase_commitment と同じ式
+  purchaseCommitment: Bytes<32>,
+  // 水揚げロット id = SHA-256("gyotak:lot:" ‖ catch_report_id)。平文で入れる。
+  lotId: Bytes<32>,
+  // 刻印時刻 (unix 秒)。blockTime 制約でチェーン時刻に縛られる。
+  committedAt: Uint<64>,
+  // レコードの版。v1 = 1。
+  schema: Uint<8>,
+}
+
+export ledger purchases: Map<Bytes<32>, PurchaseRecord>;
+export ledger owner: Bytes<32>;
+
+// 買主の識別子 (32 バイト)。Worker が D1 で確定させた値をそのまま渡す。
+witness getBuyerId(purchaseId: Bytes<32>): Bytes<32>;
+// 開封鍵 nonce (32 バイト)。Worker が発番し D1 に持つ。ログに出さない。
+witness getPurchaseNonce(purchaseId: Bytes<32>): Bytes<32>;
+witness localSecretKey(): Bytes<32>;
+
+export pure circuit publicKey(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "gyotak:purchase:pk:"), sk]);
+}
+
+constructor(initialOwner: Bytes<32>) {
+  owner = disclose(initialOwner);
+}
+
+export circuit recordPurchase(
+  purchaseId: Bytes<32>,
+  lotId: Bytes<32>,
+  schema: Uint<8>,
+  timestamp: Uint<64>
+): [] {
+  const sk = localSecretKey();
+  assert(disclose(publicKey(sk) == owner), "unauthorized");
+
+  // 刻印時刻をチェーン自身の時刻で ±600 秒に縛る (temp-log / catch v3 と同じ)。
+  const t = disclose(timestamp);
+  const lower = (t - 600) as Uint<64>;
+  const upper = (t + 600) as Uint<64>;
+  assert(blockTimeGte(lower), "timestamp too far in past");
+  assert(blockTimeLte(upper), "timestamp too far in future");
+
+  // insert のみ。一度刻んだ購入は書き換えも削除もできない。
+  assert(!purchases.member(disclose(purchaseId)), "purchase already exists");
+
+  // 買主 id と nonce は witness で受け、コミットメントは回路の中で作る。
+  const buyerId = getBuyerId(purchaseId);
+  const nonce = getPurchaseNonce(purchaseId);
+  const purchaseCommitment = persistentCommit<Bytes<32>>(buyerId, nonce);
+
+  const record = PurchaseRecord {
+    purchaseId: purchaseId,
+    purchaseCommitment: purchaseCommitment,
+    lotId: lotId,
+    committedAt: timestamp,
+    schema: schema,
+  };
+  purchases.insert(disclose(purchaseId), disclose(record));
+}
+
+export circuit rotateOwner(newOwner: Bytes<32>): [] {
+  const sk = localSecretKey();
+  assert(disclose(publicKey(sk) == owner), "unauthorized");
+  owner = disclose(newOwner);
+}
+
+export circuit verifyPurchase(purchaseId: Bytes<32>): PurchaseRecord {
+  assert(purchases.member(disclose(purchaseId)), "purchase not found");
+  return purchases.lookup(disclose(purchaseId));
+}

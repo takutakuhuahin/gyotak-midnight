@@ -1,0 +1,40 @@
+pragma language_version >= 0.22;
+
+import CompactStandardLibrary;
+
+struct BatchRecord {
+  gpsHash: Bytes<32>,
+  region: Opaque<"string">,
+  catchDate: Uint<64>,
+  fishSpecies: Opaque<"string">,
+  packedAt: Uint<64>,
+}
+
+export ledger batches: Map<Bytes<32>, BatchRecord>;
+
+witness getGpsCoords(batchId: Bytes<32>): Vector<2, Uint<32>>;
+witness getFishermanId(batchId: Bytes<32>): Opaque<"string">;
+
+export circuit recordPacking(
+  batchId: Bytes<32>,
+  region: Opaque<"string">,
+  catchDate: Uint<64>,
+  fishSpecies: Opaque<"string">,
+  timestamp: Uint<64>
+): [] {
+  assert(!batches.member(disclose(batchId)), "batch already exists");
+  const gps = getGpsCoords(batchId);
+  const gpsHash = persistentHash<Vector<2, Uint<32>>>(gps);
+  const record = BatchRecord {
+    gpsHash,
+    region,
+    catchDate,
+    fishSpecies,
+    packedAt: timestamp,
+  };
+  batches.insert(disclose(batchId), disclose(record));
+}
+
+export circuit verifyBatch(batchId: Bytes<32>): [] {
+  assert(batches.member(disclose(batchId)), "batch not found");
+}

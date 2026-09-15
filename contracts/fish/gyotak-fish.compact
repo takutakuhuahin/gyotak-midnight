@@ -1,0 +1,54 @@
+pragma language_version >= 0.22;
+
+import CompactStandardLibrary;
+
+// Plaintext fish manifest, recorded on-chain alongside the gyotak-catch
+// traceability record. Each `items` slot holds a UTF-8 "romaji:weight" string
+// (e.g. "Koro-Dai:20.8"), zero-padded to 32 bytes; unused slots are all-zero.
+struct FishRecord {
+  items: Vector<8, Bytes<32>>,
+  committedAt: Uint<64>,
+}
+
+export ledger fishRecords: Map<Bytes<32>, FishRecord>;
+export ledger owner: Bytes<32>;
+
+witness localSecretKey(): Bytes<32>;
+
+export pure circuit publicKey(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "gyotak:pk:"), sk]);
+}
+
+constructor(initialOwner: Bytes<32>) {
+  owner = disclose(initialOwner);
+}
+
+export circuit recordFish(
+  batchId: Bytes<32>,
+  items: Vector<8, Bytes<32>>,
+  timestamp: Uint<64>
+): [] {
+  const sk = localSecretKey();
+  assert(disclose(publicKey(sk) == owner), "unauthorized");
+
+  // Caller-supplied timestamp must lie within ±600s of the producing block's
+  // clock. blockTime predicates re-evaluate at settlement, so a tx that ages
+  // out of the window in mempool is rejected.
+  const t = disclose(timestamp);
+  const lower = (t - 600) as Uint<64>;
+  const upper = (t + 600) as Uint<64>;
+  assert(blockTimeGte(lower), "timestamp too far in past");
+  assert(blockTimeLte(upper), "timestamp too far in future");
+
+  assert(!fishRecords.member(disclose(batchId)), "fish record already exists");
+  const record = FishRecord {
+    items,
+    committedAt: timestamp,
+  };
+  fishRecords.insert(disclose(batchId), disclose(record));
+}
+
+export circuit verifyFish(batchId: Bytes<32>): FishRecord {
+  assert(fishRecords.member(disclose(batchId)), "fish record not found");
+  return fishRecords.lookup(disclose(batchId));
+}

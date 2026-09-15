@@ -1,0 +1,124 @@
+pragma language_version >= 0.22;
+
+import CompactStandardLibrary;
+
+// KOMON individual-provenance record.
+//
+// Public fields (always on-chain, plaintext):
+//   komonCommit  — per-individual fingerprint (replaces v2's fishManifest slot)
+//   photoHash    — image hash (catch v2's photoHash equivalent)
+//   region       — county name, e.g. "Pranburi" (public)
+//   privacyMode  — 0 = shielded, 1 = disclosed; recorded on-chain so the mode
+//                  it was committed under cannot be forged after the fact
+//   gpsHash      — commitment to the (lat,lng) pair; always present, hides coords
+//   lat,lng      — disclosed mode: the real coords (lat_e7+2^31 / lng_e7+2^31);
+//                  shielded mode: forced to 0 by the circuit (never the coords)
+//
+// GPS privacy model (reuses catch v2's getGpsCoords witness):
+//   - The real coordinates are a PRIVATE witness. They appear on-chain only
+//     through the disclosed-mode branch below.
+//   - In BOTH modes the circuit proves the coords lie inside a public bounding
+//     box [latMin,latMax]x[lngMin,lngMax] WITHOUT revealing them (range proof:
+//     only the in-range boolean is disclosed, never the coordinate itself).
+//   - In shielded mode the public output is therefore: gpsHash + "in this box".
+struct KomonRecord {
+  komonCommit: Bytes<32>,
+  photoHash: Bytes<32>,
+  region: Bytes<32>,
+  privacyMode: Uint<8>,
+  gpsHash: Bytes<32>,
+  lat: Uint<32>,
+  lng: Uint<32>,
+  committedAt: Uint<64>,
+}
+
+export ledger records: Map<Bytes<32>, KomonRecord>;
+export ledger owner: Bytes<32>;
+
+witness getGpsCoords(batchId: Bytes<32>): Vector<2, Uint<32>>;
+witness localSecretKey(): Bytes<32>;
+
+export pure circuit publicKey(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "gyotak:pk:"), sk]);
+}
+
+constructor(initialOwner: Bytes<32>) {
+  owner = disclose(initialOwner);
+}
+
+export circuit recordKomon(
+  batchId: Bytes<32>,
+  region: Bytes<32>,
+  komonCommit: Bytes<32>,
+  photoHash: Bytes<32>,
+  privacyMode: Uint<8>,
+  latMin: Uint<32>,
+  latMax: Uint<32>,
+  lngMin: Uint<32>,
+  lngMax: Uint<32>,
+  timestamp: Uint<64>
+): [] {
+  const sk = localSecretKey();
+  assert(disclose(publicKey(sk) == owner), "unauthorized");
+
+  // Caller-supplied timestamp must lie within ±600s of the producing block's
+  // clock. blockTime predicates re-evaluate at settlement, so a tx that ages
+  // out of the window in mempool is rejected.
+  const t = disclose(timestamp);
+  const lower = (t - 600) as Uint<64>;
+  const upper = (t + 600) as Uint<64>;
+  assert(blockTimeGte(lower), "timestamp too far in past");
+  assert(blockTimeLte(upper), "timestamp too far in future");
+
+  assert(!records.member(disclose(batchId)), "komon already exists");
+
+  // Public mode flag, validated and recorded so the mode can't be forged.
+  const pm = disclose(privacyMode);
+  assert(pm <= 1, "invalid privacyMode");
+
+  // Real coords: private witness. Only the commitment (gpsHash) and the
+  // in-range fact are made public in shielded mode.
+  const gps = getGpsCoords(batchId);
+  const gpsHash = persistentHash<Vector<2, Uint<32>>>(gps);
+
+  // Range proof: bounds are public params; the comparisons against the private
+  // coords disclose only the boolean outcome (which must be true), never the
+  // coordinate values themselves.
+  assert(latMin <= latMax, "bad lat bounds");
+  assert(lngMin <= lngMax, "bad lng bounds");
+  assert(disclose(gps[0] >= latMin), "lat below range");
+  assert(disclose(gps[0] <= latMax), "lat above range");
+  assert(disclose(gps[1] >= lngMin), "lng below range");
+  assert(disclose(gps[1] <= lngMax), "lng above range");
+
+  // Mode-gated coordinate disclosure WITHOUT a ternary (unsupported): multiply
+  // by the mode flag. disclosed (pm=1) -> stored = real coord; shielded (pm=0)
+  // -> stored = 0. The circuit forces this, so a prover cannot store the coords
+  // while claiming shielded, nor zero them while claiming disclosed.
+  const sel = pm as Uint<32>;
+  const latOut = (gps[0] * sel) as Uint<32>;
+  const lngOut = (gps[1] * sel) as Uint<32>;
+
+  const record = KomonRecord {
+    komonCommit: komonCommit,
+    photoHash: photoHash,
+    region: region,
+    privacyMode: pm,
+    gpsHash: gpsHash,
+    lat: latOut,
+    lng: lngOut,
+    committedAt: t,
+  };
+  records.insert(disclose(batchId), disclose(record));
+}
+
+export circuit rotateOwner(newOwner: Bytes<32>): [] {
+  const sk = localSecretKey();
+  assert(disclose(publicKey(sk) == owner), "unauthorized");
+  owner = disclose(newOwner);
+}
+
+export circuit verifyKomon(batchId: Bytes<32>): KomonRecord {
+  assert(records.member(disclose(batchId)), "komon not found");
+  return records.lookup(disclose(batchId));
+}

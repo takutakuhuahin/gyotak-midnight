@@ -1,0 +1,139 @@
+pragma language_version >= 0.22;
+
+import CompactStandardLibrary;
+
+// ─────────────────────────────────────────────────────────────────────
+// RatioComplianceRecord
+//
+// Stores the PUBLIC parameters and the PASS/FAIL result on-chain.
+// The actual ratio values (ratio_a, ratio_b) are NEVER stored —
+// they exist only as private witnesses inside the ZK circuit.
+//
+// Encoding convention (basis points):
+//   total   = 10_000  → 100.00%
+//   ratio_a =  3_500  →  35.00%
+//   ratio_b =  6_500  →  65.00%
+//
+// ZK guarantee: an observer learns ONLY whether both components satisfy
+// the declared bounds. The actual ratio values remain secret.
+// ─────────────────────────────────────────────────────────────────────
+struct RatioComplianceRecord {
+  formulaId:   Bytes<32>,
+  standardId:  Bytes<32>,
+  min_a:       Uint<32>,
+  max_a:       Uint<32>,
+  min_b:       Uint<32>,
+  max_b:       Uint<32>,
+  total:       Uint<32>,
+  result:      Uint<32>,   // 1 = PASS, 0 = FAIL
+  committedAt: Uint<64>,
+}
+
+export ledger complianceRecords: Map<Bytes<32>, RatioComplianceRecord>;
+export ledger owner: Bytes<32>;
+
+// localSecretKey: admin SK — owner-gates all write circuits.
+witness localSecretKey(): Bytes<32>;
+
+// getRatioA / getRatioB: the secret component ratios, injected at runtime.
+// These values are consumed inside the ZK circuit and NEVER disclosed.
+witness getRatioA(formulaId: Bytes<32>): Uint<32>;
+witness getRatioB(formulaId: Bytes<32>): Uint<32>;
+
+// publicKey: domain-tagged persistent hash of the admin secret key.
+// Domain tag "gyotak:ratiolog:pk:" isolates this contract's key space from
+// gyotak-catch ("gyotak:catch:pk:") and gyotak-temp-log ("gyotak:templog:pk:").
+export pure circuit publicKey(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "gyotak:ratiolog:pk:"), sk]);
+}
+
+constructor(initialOwner: Bytes<32>) {
+  owner = disclose(initialOwner);
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// recordCompliance
+//
+// Proves formula ratio compliance and writes the result on-chain.
+//
+// Private (ZK circuit only, never appears on-chain):
+//   ratio_a  — actual value of component A (injected via getRatioA witness)
+//   ratio_b  — actual value of component B (injected via getRatioB witness)
+//
+// Public (all circuit parameters are disclosed to the chain):
+//   formulaId  — product / batch identifier (e.g. SHA-256 of batch label)
+//   standardId — applicable standard code  (e.g. "QC-STD-2026-001")
+//   min_a, max_a — declared acceptable range for component A
+//   min_b, max_b — declared acceptable range for component B
+//   total       — declared total; circuit asserts ratio_a + ratio_b == total
+//
+// Two ZK assertions inside the circuit:
+//   ① Sum integrity : ratio_a + ratio_b == total  (TX rejected if false)
+//   ② Range check   : result = 1 iff a∈[min_a,max_a] ∧ b∈[min_b,max_b]
+// ─────────────────────────────────────────────────────────────────────
+export circuit recordCompliance(
+  formulaId:  Bytes<32>,
+  standardId: Bytes<32>,
+  min_a:      Uint<32>,
+  max_a:      Uint<32>,
+  min_b:      Uint<32>,
+  max_b:      Uint<32>,
+  total:      Uint<32>,
+  timestamp:  Uint<64>
+): [] {
+  const sk = localSecretKey();
+  assert(disclose(publicKey(sk) == owner), "unauthorized");
+
+  // Chain-time binding: timestamp must be within ±600s of the producing block.
+  const t = disclose(timestamp);
+  const lower = (t - 600) as Uint<64>;
+  const upper = (t + 600) as Uint<64>;
+  assert(blockTimeGte(lower), "timestamp too far in past");
+  assert(blockTimeLte(upper), "timestamp too far in future");
+
+  // Private witnesses — ratio_a and ratio_b are NEVER disclosed.
+  const ratio_a = getRatioA(formulaId);
+  const ratio_b = getRatioB(formulaId);
+
+  // ① Sum integrity: publicly asserts ratio_a + ratio_b equals the declared total.
+  //    The TX is rejected if the caller supplies an inconsistent total parameter.
+  //    The individual component values remain hidden.
+  assert(disclose((ratio_a + ratio_b) == total), "ratio sum mismatch");
+
+  // ② Range compliance: PASS (1) iff both components are within declared bounds.
+  //    The Boolean is evaluated entirely inside the ZK proof; only the 0/1
+  //    result is disclosed to the chain. ratio_a and ratio_b stay private.
+  const a_ok = (ratio_a >= min_a) && (ratio_a <= max_a);
+  const b_ok = (ratio_b >= min_b) && (ratio_b <= max_b);
+  const result: Uint<32> = disclose(a_ok && b_ok) as Uint<32>;
+
+  assert(!complianceRecords.member(disclose(formulaId)), "compliance record already exists");
+
+  const record = RatioComplianceRecord {
+    formulaId,
+    standardId,
+    min_a,
+    max_a,
+    min_b,
+    max_b,
+    total,
+    result,
+    committedAt: timestamp,
+  };
+  complianceRecords.insert(disclose(formulaId), disclose(record));
+}
+
+// rotateOwner: transfers contract ownership to a new public key.
+export circuit rotateOwner(newOwner: Bytes<32>): [] {
+  const sk = localSecretKey();
+  assert(disclose(publicKey(sk) == owner), "unauthorized");
+  owner = disclose(newOwner);
+}
+
+// verifyCompliance: public read — anyone can verify a formulaId's compliance record.
+// Returns the full RatioComplianceRecord (bounds + result) stored on-chain.
+// Note: this does NOT reveal ratio_a or ratio_b.
+export circuit verifyCompliance(formulaId: Bytes<32>): RatioComplianceRecord {
+  assert(complianceRecords.member(disclose(formulaId)), "compliance record not found");
+  return complianceRecords.lookup(disclose(formulaId));
+}

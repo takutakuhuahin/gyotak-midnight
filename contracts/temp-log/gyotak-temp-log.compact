@@ -1,0 +1,162 @@
+pragma language_version >= 0.22;
+
+import CompactStandardLibrary;
+
+struct StorageTempRecord {
+  freezerId: Uint<32>,
+  hourStartUtc: Bytes<32>,
+  avgTempOffset: Uint<32>,
+  sampleCount: Uint<32>,
+  committedAt: Uint<64>,
+}
+
+struct QuickFreezeRecord {
+  fishLotId: Bytes<32>,
+  freezerId: Uint<32>,
+  enteredAtUtc: Bytes<32>,
+  enteredAtUnix: Uint<64>,
+  result: Uint<32>,
+  sampleCount: Uint<32>,
+  committedAt: Uint<64>,
+}
+
+struct InventorySnapshotRecord {
+  freezerId: Uint<32>,
+  fishCount: Uint<32>,
+  inventory: Vector<40, Bytes<64>>,
+  committedAt: Uint<64>,
+}
+
+// inventory: 1スロット = 「魚名|登録日(YYYY-MM-DD)|ステータス」のフル文字列(Bytes<64>)
+// 例: "Banamei-Ebi(with shell)|2026-04-07|skin+sashimi fillet"
+// 空きスロットは pad(64, "") でゼロ埋め。fishCount が有効スロット数(前方詰め)。
+
+export ledger storageRecords: Map<Bytes<32>, StorageTempRecord>;
+export ledger quickFreezeRecords: Map<Bytes<32>, QuickFreezeRecord>;
+export ledger inventoryRecords: Map<Bytes<32>, InventorySnapshotRecord>;
+export ledger owner: Bytes<32>;
+
+witness localSecretKey(): Bytes<32>;
+witness getMinTempOffset(fishLotId: Bytes<32>): Uint<32>;
+
+export pure circuit publicKey(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "gyotak:templog:pk:"), sk]);
+}
+
+constructor(initialOwner: Bytes<32>) {
+  owner = disclose(initialOwner);
+}
+
+export circuit recordStorageTemp(
+  recordId: Bytes<32>,
+  freezerId: Uint<32>,
+  hourStartUtc: Bytes<32>,
+  avgTempOffset: Uint<32>,
+  sampleCount: Uint<32>,
+  timestamp: Uint<64>
+): [] {
+  const sk = localSecretKey();
+  assert(disclose(publicKey(sk) == owner), "unauthorized");
+
+  const t = disclose(timestamp);
+  const lower = (t - 600) as Uint<64>;
+  const upper = (t + 600) as Uint<64>;
+  assert(blockTimeGte(lower), "timestamp too far in past");
+  assert(blockTimeLte(upper), "timestamp too far in future");
+
+  assert(!storageRecords.member(disclose(recordId)), "storage record already exists");
+  const record = StorageTempRecord {
+    freezerId,
+    hourStartUtc,
+    avgTempOffset,
+    sampleCount,
+    committedAt: timestamp,
+  };
+  storageRecords.insert(disclose(recordId), disclose(record));
+}
+
+export circuit recordQuickFreeze(
+  fishLotId: Bytes<32>,
+  freezerId: Uint<32>,
+  enteredAtUtc: Bytes<32>,
+  enteredAtUnix: Uint<64>,
+  sampleCount: Uint<32>,
+  timestamp: Uint<64>
+): [] {
+  const sk = localSecretKey();
+  assert(disclose(publicKey(sk) == owner), "unauthorized");
+
+  // Chain-time binding (±600s of producing block, same as catch & recordStorageTemp)
+  const t = disclose(timestamp);
+  const lower = (t - 600) as Uint<64>;
+  const upper = (t + 600) as Uint<64>;
+  assert(blockTimeGte(lower), "timestamp too far in past");
+  assert(blockTimeLte(upper), "timestamp too far in future");
+
+  // T+30min checkpoint from enteredAtUnix (single sample, 1800..2100 sec)
+  const eat = disclose(enteredAtUnix);
+  const minOk = (eat + 1800) as Uint<64>;
+  const maxOk = (eat + 2100) as Uint<64>;
+  assert(disclose(t >= minOk), "timestamp earlier than enteredAtUnix + 1800s");
+  assert(disclose(t <= maxOk), "timestamp later than enteredAtUnix + 2100s");
+
+  // PASS/FAIL from the single T+30min sample temperature (witness-injected).
+  // note: minTempOffset now holds that single sample, not a min over a window.
+  // PASS = strictly below -15.00 C = offset 9_998_500 (10_000_000 - 1_500).
+  const minTempOffset = getMinTempOffset(fishLotId);
+  const result: Uint<32> = disclose(minTempOffset < 9998500) as Uint<32>;
+
+  assert(!quickFreezeRecords.member(disclose(fishLotId)), "quick freeze record already exists");
+  const record = QuickFreezeRecord {
+    fishLotId,
+    freezerId,
+    enteredAtUtc,
+    enteredAtUnix,
+    result,
+    sampleCount,
+    committedAt: timestamp,
+  };
+  quickFreezeRecords.insert(disclose(fishLotId), disclose(record));
+}
+
+export circuit recordInventorySnapshot(
+  recordId: Bytes<32>,
+  freezerId: Uint<32>,
+  fishCount: Uint<32>,
+  inventory: Vector<40, Bytes<64>>,
+  timestamp: Uint<64>
+): [] {
+  const sk = localSecretKey();
+  assert(disclose(publicKey(sk) == owner), "unauthorized");
+
+  const t = disclose(timestamp);
+  const lower = (t - 600) as Uint<64>;
+  const upper = (t + 600) as Uint<64>;
+  assert(blockTimeGte(lower), "timestamp too far in past");
+  assert(blockTimeLte(upper), "timestamp too far in future");
+
+  assert(!inventoryRecords.member(disclose(recordId)), "inventory record already exists");
+  const record = InventorySnapshotRecord {
+    freezerId,
+    fishCount,
+    inventory,
+    committedAt: timestamp,
+  };
+  inventoryRecords.insert(disclose(recordId), disclose(record));
+}
+
+export circuit rotateOwner(newOwner: Bytes<32>): [] {
+  const sk = localSecretKey();
+  assert(disclose(publicKey(sk) == owner), "unauthorized");
+  owner = disclose(newOwner);
+}
+
+export circuit verifyStorageTemp(recordId: Bytes<32>): StorageTempRecord {
+  assert(storageRecords.member(disclose(recordId)), "storage record not found");
+  return storageRecords.lookup(disclose(recordId));
+}
+
+export circuit verifyQuickFreeze(fishLotId: Bytes<32>): QuickFreezeRecord {
+  assert(quickFreezeRecords.member(disclose(fishLotId)), "quick freeze record not found");
+  return quickFreezeRecords.lookup(disclose(fishLotId));
+}
