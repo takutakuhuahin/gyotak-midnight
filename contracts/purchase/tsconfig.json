@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["witnesses.reference.ts", "test/**/*.ts"]
+  "include": ["witnesses.reference.ts", "test/**/*.ts", "verify/main.ts"]
 }

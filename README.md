@@ -53,6 +53,16 @@ npm test
 
 The compiler output in `managed/` is not committed; `npm run compile` regenerates it. `npm run typecheck` type-checks the reference witnesses and the tests.
 
+### Purchase lookup page
+
+`contracts/purchase/verify/` is a minimal read-only page. Enter a purchase ID and it reads the purchase contract's state from the public Midnight mainnet indexer, decodes it with the `ledger()` function that `compact compile` generates, and shows the purchase record and any public account attached to it. It sends no transactions. A purchase ID can be entered either as text in the form `PB-YYYYMMDD-xxxxxxxx` or as 64 hexadecimal characters. After `npm ci` and `npm run compile` above:
+
+```bash
+npm run verify   # then open the http://localhost URL it prints
+```
+
+`npm run verify:build` writes the page as static files to `verify/dist/` (not committed), and `npm run verify:preview` serves them.
+
 ## Independent verification
 
 Publishing contracts is easy. What matters is whether an outsider can check our claims without trusting us, and whether they can catch us if we lie. Our verification pages are built so they can.

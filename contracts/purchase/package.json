@@ -2,7 +2,7 @@
   "name": "gyotak-purchase-tests",
   "version": "0.1.0",
   "private": true,
-  "description": "Simulator tests for the gyotak-purchase v3 Compact contract, using the reference (dummy) witnesses",
+  "description": "Simulator tests and a read-only verification page for the gyotak-purchase v3 Compact contract",
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
@@ -11,12 +11,17 @@
   "scripts": {
     "compile": "compact compile +0.30.0 --skip-zk gyotak-purchase.compact managed",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "verify": "vite verify",
+    "verify:build": "vite build verify",
+    "verify:preview": "vite preview verify"
   },
   "devDependencies": {
     "@midnight-ntwrk/compact-runtime": "0.15.0",
     "@types/node": "22.20.4",
     "typescript": "6.0.3",
+    "vite": "8.3.1",
+    "vite-plugin-wasm": "3.6.0",
     "vitest": "4.1.11"
   }
 }

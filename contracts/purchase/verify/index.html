@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Check a GYOTAK purchase</title>
+    <style>
+      :root { color-scheme: light dark; font-family: system-ui, sans-serif; line-height: 1.5; }
+      body { max-width: 42rem; margin: 2rem auto; padding: 0 1rem; }
+      form { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+      input { flex: 1 1 24rem; padding: 0.5rem; font: 0.9rem ui-monospace, monospace; }
+      button { padding: 0.5rem 1rem; }
+      .found { color: #1a7f37; }
+      .missing { color: #9a6700; }
+      .error { color: #cf222e; }
+      .mono { font-family: ui-monospace, monospace; font-size: 0.85rem; overflow-wrap: anywhere; }
+      dt { font-weight: 600; margin-top: 0.5rem; }
+      dd { margin: 0; }
+      details { margin-top: 1rem; }
+    </style>
+  </head>
+  <body>
+    <h1>Check a GYOTAK purchase</h1>
+    <p>
+      Enter a purchase ID — as text such as PB-YYYYMMDD-xxxxxxxx, or as 64 hexadecimal characters — to see
+      what GYOTAK's purchase contract on Midnight mainnet has recorded for it.
+      This page reads the public record through Midnight's public indexer — no GYOTAK server is involved — and
+      changes nothing.
+    </p>
+    <form id="lookup">
+      <input id="purchase-id" name="purchase-id" aria-label="Purchase ID" autocomplete="off" spellcheck="false"
+             placeholder="PB-YYYYMMDD-xxxxxxxx, or 64 characters 0–9 a–f" />
+      <button type="submit">Check</button>
+    </form>
+    <section id="result" aria-live="polite"></section>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
