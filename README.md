@@ -2,7 +2,7 @@
 
 GYOTAK is a working B2B seafood business in Pranburi, Prachuap Khiri Khan, Thailand. We buy directly from local boats, process and flash-freeze on site, and sell to restaurants, hotels and distributors.
 
-This repository holds the Compact contracts behind that business. They are not a demo. Catch records and freezer temperatures are written to Midnight **mainnet** as part of daily operations, and purchase records are written there for each order.
+This repository holds the Compact contracts behind that business. They are not a demo. Catch records and freezer temperatures are written to Midnight **mainnet** as part of daily operations, and purchase records are written there for each lot in a paid order.
 
 ## Why privacy is the requirement, not a feature
 
@@ -14,14 +14,34 @@ Our buyers want proof of where a fish came from and how cold it stayed on the wa
 
 Selective disclosure is the only mechanism that satisfies all three at once. That is why this runs on Midnight.
 
+### What stays private, what is public, and why
+
+For the three contracts running on mainnet (catch v3, temp-log and purchase v3), the table shows the main data each one handles: what goes on the public ledger, what stays off it, and why.
+
+| What | On the ledger | Who can check it, and how | Why |
+|---|---|---|---|
+| **Catch** — exact fishing position (GPS coordinates) | Commitment only. The coordinates, and the nonce that hides them, are not written. | No one can read them from the ledger. We can reveal the coordinates and the nonce to a partner we choose, who recomputes the commitment and compares it with the one on the ledger. | Fishing grounds are the livelihood of the boats we buy from, and publishing exact coordinates would hand them to anyone watching. |
+| **Catch** — region name shown with the catch | Public, as we write it. The contract does not check it against the GPS position. | Anyone can read it from the ledger by batch ID. It is a display label. | Buyers want to know where a fish came from, and a place name tells them without giving out exact coordinates. |
+| **Catch** — species, catch manifest (species and weight), catch date and photo hash | Public. The photo itself is not written. | Anyone can enter the batch ID from an invoice on our catch verification page, or read the record from the public ledger themselves. | Customers and auditors can check a shipment against its catch record without having to trust us. |
+| **Temp-log** — freezer storage temperature | Public, as an hourly average for each freezer with its sample count. Individual sensor readings are not written. | Anyone can read the records from the public Midnight indexer and decode them with our published procedure, without going through our server. An hourly average does not prove the temperature stayed within a limit at every moment. | Storage temperature is a quality signal for buyers, not a trade secret. |
+| **Temp-log** — temperature measured in the quick-freeze check | Not written. Only the pass/fail result is public, with the lot, freezer, entry time and sample count. | Anyone can read the result from the ledger. The measured value is a private input we supply to the proof, which compares it with a fixed threshold set in the published contract. | Buyers can see whether each lot passed, while the measured temperatures, which reveal our freezer performance and freezing know-how, stay private. |
+| **Temp-log** — hours with no temperature record | Left as gaps. We do not backfill them. | Anyone: a missing hour simply has no record in the public contract state, and a record written later would carry a write time well after the hour it covers. | A cold-chain record with no gaps in it, produced by hardware in a fish plant, would not be honest. |
+| **Purchase** — who the buyer is | Commitment only. The buyer's identifier and the opening value are not written. | No one reading the ledger can tell who bought unless the buyer claims the purchase (see the binding row below). GYOTAK holds each buyer's identifier and opening value, so it can link each purchase to its customer. A buyer holding the opening value can recompute the commitment from it and their identifier with a plain SHA-256 hash, without Midnight tooling or help from GYOTAK. | A customer who never speaks publicly about a purchase is never named on the public ledger, yet the purchase is still on record. |
+| **Purchase** — that a purchase was recorded (purchase ID, lot ID and time) | Public. | Anyone can read it from the public Midnight indexer; the purchase lookup page in this repository does this. It shows that GYOTAK recorded the purchase, not that the sale took place. | A purchase can be shown to have been on record at a fixed time without naming the buyer. |
+| **Purchase** — the buyer's public account name and referral ID (a "binding") | Public. We write one only when the buyer asks to claim a purchase; the contract itself checks only that GYOTAK is the writer and that the purchase exists. It cannot be changed later. | Anyone can read it from the ledger. The full set of claimed account names and referral IDs is public, and one buyer's claims can be linked through their referral ID. The account name is self-reported; GYOTAK does not check that the account belongs to the buyer. | It is recorded only for buyers who choose to speak publicly about a purchase; a buyer who stays silent is never named. |
+| **Purchase** — order contents beyond the lot ID (such as quantities), prices, payment amounts and other personal data | Not recorded. | Anyone can read the contract source in this repository: the records have no fields for them. | Customer pricing cannot be public, and a purchase can be checked without any personal data on the ledger. |
+| **All three** — when each record was written | Public. Each record's write time must be close to the block time; dates inside a record, such as the catch date, are as we write them. The deployed contracts have no circuit that edits or deletes a record. | Anyone can read the write times from the ledger. | A record is worthless as evidence if the seller can back-date it or edit it after the fact. |
+
+Anything marked public can be read by anyone from the public Midnight indexer.
+
 ## Contracts
 
 | Path | Lines | What it does |
 |---|---|---|
 | `contracts/catch/` | 99 | Catch records (v3 — the version running on mainnet). Species and weight are public. The catch location is committed, not disclosed — the owner can later reveal exact coordinates to a chosen partner, who recomputes the commitment independently. |
-| `contracts/temp-log/` | 162 | Cold-chain temperature logging. Each reading is committed with a range proof, so a buyer learns whether the chain held without seeing our freezer telemetry. |
+| `contracts/temp-log/` | 162 | Cold-chain temperature logging. Storage temperatures are published as hourly averages; a quick-freeze check publishes only its pass/fail result and keeps the measured temperature private. |
 | `contracts/komon/` | 124 | KOMON — physical fingerprint of a foam box. Detects substitution of the box between packing and delivery. |
-| `contracts/purchase/` | 151 | Purchase records (v3 — the version running on mainnet). The buyer is written as a commitment, not an identifier, alongside the lot ID and timestamp — so a purchase can be proven to have happened without exposing who made it. A buyer who chooses to speak publicly can add a binding that records their account handle and referral id. `witnesses.reference.ts` is a reference implementation of the three witnesses that matches their declarations and returns fixed dummy values; the production witnesses are not published while a patent application is being prepared. |
+| `contracts/purchase/` | 151 | Purchase records (v3 — the version running on mainnet). The buyer is written as a commitment, not an identifier, alongside the lot ID and timestamp — so the record shows that GYOTAK recorded the purchase, without exposing who made it. A buyer who chooses to speak publicly can add a binding that records their account handle and referral id. `witnesses.reference.ts` is a reference implementation of the three witnesses that matches their declarations and returns fixed dummy values; the production witnesses are not published while a patent application is being prepared. |
 | `contracts/fish/` | 54 | Records a plaintext fish manifest — up to eight species:weight entries per batch ID — that only the owner can write and no one can overwrite. |
 | `contracts/ratio-log/` | 139 | Yield ratio logging for processing. |
 
@@ -36,7 +56,7 @@ Selective disclosure is the only mechanism that satisfies all three at once. Tha
 | `komon` | preprod | — |
 | `purchase` (v3) | **mainnet** | `d11d52bd5875ecc2e89e97149e0237db20a91c989f30268950e892655a2a2a57` |
 
-The catch and temp-log contracts are written to continuously by live operations; purchase is written per order. None of it comes from a demo script.
+The catch and temp-log contracts are written to continuously by live operations; purchase is written for each lot in a paid order. None of it comes from a demo script.
 
 ## Testing the purchase contract
 
@@ -79,7 +99,7 @@ The page documents the on-chain byte layout and the decoding procedure, with a w
 
 It also shows what is missing. For the lot above, 16 of 120 hourly readings are on-chain; the gaps correspond to periods when the sensor network or the mirroring service was down. We do not backfill them. A cold-chain record with no gaps in it, produced by hardware in a fish plant, would not be honest.
 
-**What we do not claim.** Each temperature record is an hourly average. It does not prove the temperature stayed within a limit at every moment of that hour. GPS in catch v3 is a hiding commitment — district-level provenance is provable, exact coordinates are not disclosed unless the owner chooses to reveal them to a specific party.
+**What we do not claim.** Each temperature record is an hourly average. It does not prove the temperature stayed within a limit at every moment of that hour. GPS in catch v3 is a hiding commitment — the region name shown with a catch is not proven by the contract, and exact coordinates are not disclosed unless the owner chooses to reveal them to a specific party.
 
 ## Built by
 
