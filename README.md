@@ -2,7 +2,7 @@
 
 GYOTAK is a working B2B seafood business in Pranburi, Prachuap Khiri Khan, Thailand. We buy directly from local boats, process and flash-freeze on site, and sell to restaurants, hotels and distributors.
 
-This repository holds the Compact contracts behind that business. They are not a demo. Catch records, freezer temperatures and anti-swap box fingerprints are written to Midnight **mainnet** as part of daily operations.
+This repository holds the Compact contracts behind that business. They are not a demo. Catch records and freezer temperatures are written to Midnight **mainnet** as part of daily operations, and purchase records are written there for each order.
 
 ## Why privacy is the requirement, not a feature
 
@@ -21,8 +21,8 @@ Selective disclosure is the only mechanism that satisfies all three at once. Tha
 | `contracts/catch/` | 99 | Catch records (v3 — the version running on mainnet). Species and weight are public. The catch location is committed, not disclosed — the owner can later reveal exact coordinates to a chosen partner, who recomputes the commitment independently. |
 | `contracts/temp-log/` | 162 | Cold-chain temperature logging. Each reading is committed with a range proof, so a buyer learns whether the chain held without seeing our freezer telemetry. |
 | `contracts/komon/` | 124 | KOMON — physical fingerprint of a foam box. Detects substitution of the box between packing and delivery. |
-| `contracts/purchase/` | 88 | Purchase records. The buyer is written as a commitment, not an identifier, alongside the lot ID and timestamp — so a purchase can be proven to have happened without exposing who made it. Threshold proofs over the amount are the next step, not yet implemented. |
-| `contracts/fish/` | 54 | Shared fish record structures used by the contracts above. |
+| `contracts/purchase/` | 151 | Purchase records (v3 — the version running on mainnet). The buyer is written as a commitment, not an identifier, alongside the lot ID and timestamp — so a purchase can be proven to have happened without exposing who made it. A buyer who chooses to speak publicly can add a binding that records their account handle and referral id. |
+| `contracts/fish/` | 54 | Records a plaintext fish manifest — up to eight species:weight entries per batch ID — that only the owner can write and no one can overwrite. |
 | `contracts/ratio-log/` | 139 | Yield ratio logging for processing. |
 
 `history/` holds earlier iterations (catch v1, catch v2, and the original April traceability sketch), kept so the progression is visible rather than squashed.
@@ -34,9 +34,9 @@ Selective disclosure is the only mechanism that satisfies all three at once. Tha
 | `catch` (v3) | **mainnet** | `bc33d8c05852decd4ef183201a8a9f3c25eabaa46a81786f306b95397ed118ab` |
 | `temp-log` | **mainnet** | `39847629460066f7a572b1ae55d6c3a900cc347941e34b45c14457ba40f38611` |
 | `komon` | preprod | — |
-| `purchase` | preprod (under test) | — |
+| `purchase` (v3) | **mainnet** | `d11d52bd5875ecc2e89e97149e0237db20a91c989f30268950e892655a2a2a57` |
 
-Both mainnet contracts are written to continuously by live operations, not by a demo script.
+The catch and temp-log contracts are written to continuously by live operations; purchase is written per order. None of it comes from a demo script.
 
 ## Independent verification
 
