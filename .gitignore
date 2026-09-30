@@ -10,3 +10,6 @@ target/
 walletState*
 *-state/
 .DS_Store
+
+# Compact compiler output (regenerate with `npm run compile` in the contract directory)
+managed/

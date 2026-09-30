@@ -11,7 +11,7 @@
 // fixed, published nonce makes every purchase commitment trivially openable.
 //
 // The imported types come from the compiled contract. Run this in this directory:
-//   compact compile gyotak-purchase.compact managed
+//   npm run compile   # compact compile +0.30.0 --skip-zk gyotak-purchase.compact managed
 
 import type { WitnessContext } from '@midnight-ntwrk/compact-runtime';
 import type { Ledger, Witnesses } from './managed/contract/index.js';

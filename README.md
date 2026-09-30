@@ -38,6 +38,21 @@ Selective disclosure is the only mechanism that satisfies all three at once. Tha
 
 The catch and temp-log contracts are written to continuously by live operations; purchase is written per order. None of it comes from a demo script.
 
+## Testing the purchase contract
+
+`contracts/purchase/test/` runs the purchase contract's circuits in an in-memory simulator, using the JavaScript that `compact compile` generates from the contract and the dummy witnesses in `witnesses.reference.ts`. No node, indexer or proof server is involved. The tests cover the calls that must succeed and every rejection made by an `assert` in the contract.
+
+You need the [Compact toolchain](https://docs.midnight.network/getting-started/installation) with compiler 0.30.0 (`compact update --no-set-default 0.30.0` installs it without changing your default compiler) and Node.js 20.19+, 22.12+ or 24+. Compile the contract first, then run the tests:
+
+```bash
+cd contracts/purchase
+npm ci
+npm run compile   # compact compile +0.30.0 --skip-zk gyotak-purchase.compact managed
+npm test
+```
+
+The compiler output in `managed/` is not committed; `npm run compile` regenerates it. `npm run typecheck` type-checks the reference witnesses and the tests.
+
 ## Independent verification
 
 Publishing contracts is easy. What matters is whether an outsider can check our claims without trusting us, and whether they can catch us if we lie. Our verification pages are built so they can.
