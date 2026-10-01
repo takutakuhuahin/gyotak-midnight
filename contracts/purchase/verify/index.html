@@ -10,9 +10,12 @@
       form { display: flex; gap: 0.5rem; flex-wrap: wrap; }
       input { flex: 1 1 24rem; padding: 0.5rem; font: 0.9rem ui-monospace, monospace; }
       button { padding: 0.5rem 1rem; }
+      form details { flex-basis: 100%; margin-top: 0.5rem; }
+      form details input { width: 100%; box-sizing: border-box; }
       .found { color: #1a7f37; }
       .missing { color: #9a6700; }
       .error { color: #cf222e; }
+      .source { font-style: italic; }
       .mono { font-family: ui-monospace, monospace; font-size: 0.85rem; overflow-wrap: anywhere; }
       dt { font-weight: 600; margin-top: 0.5rem; }
       dd { margin: 0; }
@@ -23,14 +26,29 @@
     <h1>Check a GYOTAK purchase</h1>
     <p>
       Enter a purchase ID — as text such as PB-YYYYMMDD-xxxxxxxx, or as 64 hexadecimal characters — to see
-      what GYOTAK's purchase contract on Midnight mainnet has recorded for it.
-      This page reads the public record through Midnight's public indexer — no GYOTAK server is involved — and
-      changes nothing.
+      what GYOTAK's purchase contract on Midnight mainnet has recorded for it. This page only reads the record;
+      it changes nothing.
+    </p>
+    <p>
+      By default, this page gets the record through GYOTAK's server. The calculation and the check are done in
+      your browser.
     </p>
     <form id="lookup">
       <input id="purchase-id" name="purchase-id" aria-label="Purchase ID" autocomplete="off" spellcheck="false"
              placeholder="PB-YYYYMMDD-xxxxxxxx, or 64 characters 0–9 a–f" />
-      <button type="submit">Check</button>
+      <button type="submit" disabled>Check</button>
+      <details>
+        <summary>Optional: read the record directly with your own Blockfrost project ID</summary>
+        <p>
+          If you would rather not rely on GYOTAK's server, enter a Blockfrost project ID for Midnight mainnet.
+          Blockfrost is a service that gives access to Midnight's public records; you can create a project ID at
+          blockfrost.io. With a project ID, your browser asks Blockfrost for the record directly and GYOTAK's
+          server is not used. The project ID is sent only to Blockfrost. This page does not save it and does not
+          show it. Leave it empty to read through GYOTAK's server.
+        </p>
+        <input id="project-id" type="password" aria-label="Your Blockfrost project ID (optional)"
+               autocomplete="off" spellcheck="false" placeholder="YOUR_BLOCKFROST_PROJECT_ID" />
+      </details>
     </form>
     <section id="result" aria-live="polite"></section>
     <script type="module" src="./main.ts"></script>
