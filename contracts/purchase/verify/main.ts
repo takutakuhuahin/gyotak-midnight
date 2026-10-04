@@ -104,9 +104,28 @@ const decodeHandle = (bytes: Uint8Array): string => {
 // 16 bytes those characters encode, right-padded to 32.
 const decodeReferralId = (bytes: Uint8Array): string => `aff_${toHex(bytes.subarray(0, 16))}`;
 
-// Purchases with no catch record carry lotId = SHA-256("gyotak:lot:no-lot").
-const noLotId = async (): Promise<string> =>
-  toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('gyotak:lot:no-lot'))));
+const sha256Text = async (text: string): Promise<string> =>
+  toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text))));
+
+// What the lot ID means depends on the record format version (schema):
+//   1 — one record per lot of an order: lotId = SHA-256("gyotak:lot:" ‖ catch record ID).
+//       A purchase with no catch record carries lotId = SHA-256("gyotak:lot:no-lot").
+//   2 — one record for the whole order: lotId = SHA-256("gyotak:order-lots:v1:" ‖ manifest).
+//       The manifest lists, for the order's items, the catch record ID (lowercase UUID) of
+//       each item tied to exactly one catch record and "no-lot" for any other item, without
+//       duplicates, sorted in ASCII order, joined with commas. An order with no item tied to
+//       exactly one catch record has the manifest "no-lot".
+// Any other version is shown as recorded, without a reading.
+const ORDER_LOTS_PREFIX = 'gyotak:order-lots:v1:';
+
+type LotKind = 'lot' | 'no-lot' | 'order' | 'order-no-lot' | 'unknown';
+
+const lotKind = async (record: PurchaseRecord): Promise<LotKind> => {
+  const lotHex = toHex(record.lotId);
+  if (record.schema === 1n) return lotHex === (await sha256Text('gyotak:lot:no-lot')) ? 'no-lot' : 'lot';
+  if (record.schema === 2n) return lotHex === (await sha256Text(`${ORDER_LOTS_PREFIX}no-lot`)) ? 'order-no-lot' : 'order';
+  return 'unknown';
+};
 
 // ---- reading the contract state ---------------------------------------------
 
@@ -234,7 +253,22 @@ const fingerprintNote = (): HTMLParagraphElement =>
     'The fingerprint is calculated in your browser from the contract data exactly as it was received. Reading through GYOTAK\'s server and reading with your own Blockfrost project ID give the same fingerprint, as long as the contract has not changed in between (same block).',
   );
 
-const renderFound = (out: HTMLElement, id: Uint8Array, snap: Snapshot, record: PurchaseRecord, hasLot: boolean): void => {
+const lotText = (kind: LotKind, schema: bigint): string => {
+  switch (kind) {
+    case 'lot':
+      return "GYOTAK linked this purchase to a recorded catch. The lot ID in the technical details refers to that catch in GYOTAK's catch records; this page does not look it up.";
+    case 'no-lot':
+      return 'No catch record is linked to this purchase: GYOTAK could not match it to exactly one catch, so it was recorded without one.';
+    case 'order':
+      return `This record covers the whole order. Its lot ID is SHA-256 of the text ${ORDER_LOTS_PREFIX} followed by the order's manifest: the catch record ID of each item tied to exactly one catch record, and no-lot for any other item. The lot ID is not the value for a manifest of just no-lot, so under GYOTAK's rule at least one item is tied to a catch record; other items may not be. GYOTAK publishes the manifest (see the technical details). Compute its SHA-256 yourself and compare it with the lot ID. This page does not fetch the manifest or look up the catch records.`;
+    case 'order-no-lot':
+      return `This record covers the whole order. No item of the order is tied to exactly one catch record: the lot ID is SHA-256 of the text ${ORDER_LOTS_PREFIX}no-lot, the value for an order whose manifest is just no-lot.`;
+    case 'unknown':
+      return `This record uses format version ${schema}, which this page does not know. The lot ID is shown as recorded, without a reading.`;
+  }
+};
+
+const renderFound = (out: HTMLElement, id: Uint8Array, snap: Snapshot, record: PurchaseRecord, kind: LotKind): void => {
   const recordedAt = fromSeconds(record.committedAt);
   const lotHex = toHex(record.lotId);
 
@@ -247,14 +281,7 @@ const renderFound = (out: HTMLElement, id: Uint8Array, snap: Snapshot, record: P
       "The buyer's identity is not stored — only a commitment: a one-way fingerprint made from the buyer's ID and a random secret number that GYOTAK keeps off the chain. The commitment alone does not reveal who the buyer is.",
     ),
   );
-  out.append(
-    el(
-      'p',
-      hasLot
-        ? "GYOTAK linked this purchase to a recorded catch. The lot ID in the technical details refers to that catch in GYOTAK's catch records; this page does not look it up."
-        : 'No catch record is linked to this purchase: GYOTAK could not match it to exactly one catch, so it was recorded without one.',
-    ),
-  );
+  out.append(el('p', lotText(kind, record.schema)));
 
   const binding = snap.ledger.binding(id);
   if (binding) {
@@ -275,7 +302,17 @@ const renderFound = (out: HTMLElement, id: Uint8Array, snap: Snapshot, record: P
   detailRow(list, 'Lot ID', lotHex);
   detailRow(list, 'Commitment', toHex(record.purchaseCommitment));
   detailRow(list, 'Recorded at (Unix seconds)', record.committedAt.toString());
-  detailRow(list, 'Record format version', record.schema.toString());
+  detailRow(list, 'Record format version', record.schema === 2n ? '2 (one record for the whole order)' : record.schema.toString());
+  if (kind === 'order' || kind === 'order-no-lot') {
+    // A text purchase ID is stored like a handle: ASCII, right-padded with zero bytes.
+    // GYOTAK's server accepts only PB-YYYYMMDD- followed by 8 lowercase hex digits.
+    const textId = decodeHandle(id);
+    const pid = /^PB-[0-9]{8}-[0-9a-f]{8}$/.test(textId) ? textId : '<purchase ID>';
+    detailRow(list, 'How the lot ID is made (format 2)', `SHA-256 of the UTF-8 text "${ORDER_LOTS_PREFIX}" followed by the manifest`);
+    detailRow(list, "Manifest on GYOTAK's confirmation page", `https://line-harness.gyotak.workers.dev/verify/purchase/?id=${pid}`);
+    detailRow(list, 'Manifest as JSON (field lot.manifest)', `https://line-harness.gyotak.workers.dev/gyotak/verify-purchase?id=${pid}`);
+    detailRow(list, 'Compute it in a terminal', `printf '%s' '${ORDER_LOTS_PREFIX}<manifest>' | sha256sum   (macOS: shasum -a 256)`);
+  }
   if (binding) {
     detailRow(list, 'Handle (raw bytes)', toHex(binding.handle));
     detailRow(list, 'Referral ID (raw bytes)', toHex(binding.referrerId));
@@ -387,10 +424,10 @@ form.addEventListener('submit', async (event) => {
   try {
     const snap = await readSnapshot(projectId);
     const record = snap.ledger.purchase(id);
-    const hasLot = record !== undefined && toHex(record.lotId) !== (await noLotId());
+    const kind = record && (await lotKind(record));
     if (lookup !== latestLookup) return;
     out.replaceChildren();
-    if (record) renderFound(out, id, snap, record, hasLot);
+    if (record && kind) renderFound(out, id, snap, record, kind);
     else renderNotFound(out, id, snap);
   } catch (error) {
     if (lookup !== latestLookup) return;
