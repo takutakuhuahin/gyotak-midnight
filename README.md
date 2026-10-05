@@ -1,8 +1,15 @@
-# GYOTAK — ZK-verified provenance for sashimi-grade Thai seafood
+# GYOTAK — seafood provenance and anonymous purchase proofs on Midnight
 
 GYOTAK is a working B2B seafood business in Pranburi, Prachuap Khiri Khan, Thailand. We buy directly from local boats, process and flash-freeze on site, and sell to restaurants, hotels and distributors.
 
-This repository holds the Compact contracts behind that business. They are not a demo. Catch records and freezer temperatures are written to Midnight **mainnet** as part of daily operations, and purchase records are written there for each lot in a paid order.
+This repository holds the Compact contracts behind that business. They are not a demo. Catch records and freezer temperatures are written to Midnight **mainnet** as part of daily operations, and purchase records are written there for each paid order (since 4 October 2026, Thailand time, as one record per order; before that, as one record for each lot in an order).
+
+## What's new in Wave 2
+
+- **Wave 1 feedback, addressed:** a reference implementation of the purchase witnesses with fixed dummy values ([`witnesses.reference.ts`](contracts/purchase/witnesses.reference.ts)); simulator tests for the purchase contract, 24 tests ([`test/`](contracts/purchase/test/)); a read-only verification page in this repository ([`verify/`](contracts/purchase/verify/), see [Purchase lookup page](#purchase-lookup-page)); and a table of what stays private and what is public ([What stays private, what is public, and why](#what-stays-private-what-is-public-and-why)).
+- **Purchase contract v3 on mainnet:** `d11d52bd5875ecc2e89e97149e0237db20a91c989f30268950e892655a2a2a57` ([source](contracts/purchase/gyotak-purchase.compact), [all addresses](#status)).
+- **Purchase proof page:** [verify.gyotakuprotocol.com/verify/purchase/](https://verify.gyotakuprotocol.com/verify/purchase/) shows a purchase record and checks it against Midnight mainnet.
+- **Proposal to the Midnight indexer:** read-only GraphQL queries over HTTP GET, [midnight-indexer#1556](https://github.com/midnightntwrk/midnight-indexer/issues/1556).
 
 ## Why privacy is the requirement, not a feature
 
@@ -56,7 +63,7 @@ Anything marked public can be read by anyone from the public Midnight indexer.
 | `komon` | preprod | — |
 | `purchase` (v3) | **mainnet** | `d11d52bd5875ecc2e89e97149e0237db20a91c989f30268950e892655a2a2a57` |
 
-The catch and temp-log contracts are written to continuously by live operations; purchase is written for each lot in a paid order. None of it comes from a demo script.
+The catch and temp-log contracts are written to continuously by live operations; purchase is written for each paid order. Since 4 October 2026 (Thailand time) that is one record per order (`schema` 2): its lot ID is the SHA-256 of a manifest that lists the order's items — the catch record ID of each item tied to exactly one catch record, and `no-lot` for any other item (see [Purchase lookup page](#purchase-lookup-page)). Records written before that date have one record for each lot of an order (`schema` 1) and stay as they are. None of it comes from a demo script.
 
 ## Testing the purchase contract
 
@@ -98,13 +105,13 @@ npm run verify   # then open the http://localhost URL it prints
 
 Publishing contracts is easy. What matters is whether an outsider can check our claims without trusting us, and whether they can catch us if we lie. Our verification pages are built so they can.
 
-**Catch records** — [verification page](https://line-harness.gyotak.workers.dev/verify/)
+**Catch records** — [verification page](https://verify.gyotakuprotocol.com/verify/)
 
 Enter a batch ID from an invoice and the page returns, before any check is run: the raw state SHA-256, the byte offset where that batch ID sits, and the raw record bytes at that offset. Those are falsifiable commitments — if the indexer returns a different state, the hash will not match and we are caught. The page then offers four independent ways to run the check yourself: an in-browser button, a console snippet, a terminal one-liner, and a prompt you can hand to an AI assistant. We state plainly that the button runs our code, so anyone wanting a check that depends on nothing of ours should use the snippet instead.
 
 The extracted field list carries an explicit disclaimer: GYOTAK does not assert what each value means. The raw bytes are shown so a reader can decode them rather than take our reading of them.
 
-**Cold-chain temperatures** — [example lot](https://line-harness.gyotak.workers.dev/gyotak/storage-trace/Katsuo%EF%BC%88suma%EF%BC%89/2026-09-06?status=skin%2Bsashimi%20fillet&until=2026-09-13)
+**Cold-chain temperatures** — [example lot](https://verify.gyotakuprotocol.com/gyotak/storage-trace/Katsuo%EF%BC%88suma%EF%BC%89/2026-09-06?status=skin%2Bsashimi%20fillet&until=2026-09-13)
 
 The page documents the on-chain byte layout and the decoding procedure, with a worked example, so an agent can query the public Midnight indexer directly and decode temperatures without going through our server.
 
