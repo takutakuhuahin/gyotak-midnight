@@ -4,6 +4,17 @@ GYOTAK is a working B2B seafood business in Pranburi, Prachuap Khiri Khan, Thail
 
 This repository holds the Compact contracts behind that business. They are not a demo. Catch records and freezer temperatures are written to Midnight **mainnet** as part of daily operations, and purchase records are written there for each paid order (since 4 October 2026, Thailand time, as one record per order; before that, as one record for each lot in an order).
 
+## What's new in Wave 3
+
+- **Proof Ads.** Only people who actually bought can become referrers. Each purchase is recorded on Midnight as an anonymous purchase proof, and the buyer links it to a referral link or a social post only when they choose. AI agents and readers can trust a recommendation without learning who bought.
+- **Payout address registration contract on mainnet:** `b4afdcc3cea1cea929201c0d771c6427b8ebe603009b3f3399a551fb71fb0fb9` ([source](contracts/store-registry/gyotak-store-registry.compact), deployed at block 3388854 on 9 November 2026 UTC). A store proves that it controls its payout address by signing a fixed message with MetaMask (`personal_sign`, EIP-191). Inside the circuit, the contract hashes the message with Keccak-256, recovers the Ethereum address from the store's public key, and checks the ECDSA signature, using the secp256k1 built-ins that came with Ledger 9 (compiler 0.36.0). The store ID is registered only when all of this is correct.
+  - **The signature never reaches the chain.** The public key and the signature are private inputs to the proof. Only the store ID and its 20-byte payout address are written to the ledger.
+  - **A signature cannot be reused.** The signed message names this contract's address, the network and the store ID. The circuit checks the contract address against the contract itself and the network against the value sealed at deployment, so a signature made for another deployment, another network or another store is rejected by the circuit.
+  - **GYOTAK cannot re-point a store on its own.** GYOTAK submits the transactions, but registering needs a signature from the new address, and changing a registered address also needs a signature from the address currently registered.
+- **Every payment is checked against the registration.** Before a payment page is shown, when a payment starts, and again before the payment is verified and before it is settled, GYOTAK's server compares the payout address it is about to use with the address registered on Midnight for that store. If they differ, or the registration cannot be read, the payment stops. Customers can run the same comparison themselves on GYOTAK's store verification page, which reads the contract state in the browser.
+- **Purchase proofs for bookings paid with x402.** Bookings paid with x402 in USDC on Base mainnet now get a purchase proof recorded on Midnight mainnet, in the same purchase v3 contract as the seafood orders. These are trial payments of 1.00 USDC, shown as "Test record"; the latest is [TEST-20261113-aab725f6](https://verify.gyotakuprotocol.com/verify/purchase/?id=TEST-20261113-aab725f6) (block 3433969). The record holds the purchase ID, the buyer commitment, a fixed lot hash and the schema number. The store, the amount, the payment transaction and the wallet are not written to it.
+- **Patent application filed in Japan:** Japanese Patent Application No. 2026-240891 (特願2026-240891), filed on 11 November 2026.
+
 ## What's new in Wave 2
 
 - **Wave 1 feedback, addressed:** a reference implementation of the purchase witnesses with fixed dummy values ([`witnesses.reference.ts`](contracts/purchase/witnesses.reference.ts)); simulator tests for the purchase contract, 24 tests ([`test/`](contracts/purchase/test/)); a read-only verification page in this repository ([`verify/`](contracts/purchase/verify/), see [Purchase lookup page](#purchase-lookup-page)); and a table of what stays private and what is public ([What stays private, what is public, and why](#what-stays-private-what-is-public-and-why)).
@@ -23,7 +34,7 @@ Selective disclosure is the only mechanism that satisfies all three at once. Tha
 
 ### What stays private, what is public, and why
 
-For the three contracts running on mainnet (catch v3, temp-log and purchase v3), the table shows the main data each one handles: what goes on the public ledger, what stays off it, and why.
+For the four contracts running on mainnet (catch v3, temp-log, purchase v3 and store-registry), the table shows the main data each one handles: what goes on the public ledger, what stays off it, and why.
 
 | What | On the ledger | Who can check it, and how | Why |
 |---|---|---|---|
@@ -36,8 +47,10 @@ For the three contracts running on mainnet (catch v3, temp-log and purchase v3),
 | **Purchase** — who the buyer is | Commitment only. The buyer's identifier and the opening value are not written. | No one reading the ledger can tell who bought unless the buyer claims the purchase (see the binding row below). GYOTAK holds each buyer's identifier and opening value, so it can link each purchase to its customer. A buyer holding the opening value can recompute the commitment from it and their identifier with a plain SHA-256 hash, without Midnight tooling or help from GYOTAK. | A customer who never speaks publicly about a purchase is never named on the public ledger, yet the purchase is still on record. |
 | **Purchase** — that a purchase was recorded (purchase ID, lot ID and time) | Public. | Anyone can read it from Midnight mainnet; the purchase lookup page in this repository does this, through GYOTAK's server by default or directly from Blockfrost with your own project ID (see [Purchase lookup page](#purchase-lookup-page)). It shows that GYOTAK recorded the purchase, not that the sale took place. | A purchase can be shown to have been on record at a fixed time without naming the buyer. |
 | **Purchase** — the buyer's public account name and referral ID (a "binding") | Public. We write one only when the buyer asks to claim a purchase; the contract itself checks only that GYOTAK is the writer and that the purchase exists. It cannot be changed later. | Anyone can read it from the ledger. The full set of claimed account names and referral IDs is public, and one buyer's claims can be linked through their referral ID. The account name is self-reported; GYOTAK does not check that the account belongs to the buyer. | It is recorded only for buyers who choose to speak publicly about a purchase; a buyer who stays silent is never named. |
+| **Store registry** — each registered store ID and its payout address | Public. The store ID and its 20-byte payout address are written when a registration is accepted. Nothing else about the store is written. | Anyone can read them from the ledger by store ID. GYOTAK's server compares the payout address with this record before every payment, and customers can make the same comparison on GYOTAK's store verification page. | A customer about to pay can confirm that the address belongs to the store that registered it, without trusting GYOTAK. |
+| **Store registry** — the store's signature and public key | Not written. They are private inputs to the proof. | No one can read them from the ledger. The circuit checks them at registration: the public key must give the payout address, and the signature must cover this contract's address, the network, the store ID and the payout address. | A store proves that it controls the address without putting its signature on the public ledger, and a signature made for another contract, network or store is rejected. |
 | **Purchase** — order contents beyond the lot ID (such as quantities), prices, payment amounts and other personal data | Not recorded. | Anyone can read the contract source in this repository: the records have no fields for them. | Customer pricing cannot be public, and a purchase can be checked without any personal data on the ledger. |
-| **All three** — when each record was written | Public. Each record's write time must be close to the block time; dates inside a record, such as the catch date, are as we write them. The deployed contracts have no circuit that edits or deletes a record. | Anyone can read the write times from the ledger. | A record is worthless as evidence if the seller can back-date it or edit it after the fact. |
+| **Catch, temp-log and purchase** — when each record was written | Public. Each record's write time must be close to the block time; dates inside a record, such as the catch date, are as we write them. The deployed contracts have no circuit that edits or deletes a record. | Anyone can read the write times from the ledger. | A record is worthless as evidence if the seller can back-date it or edit it after the fact. |
 
 Anything marked public can be read by anyone from the public Midnight indexer.
 
@@ -51,6 +64,7 @@ Anything marked public can be read by anyone from the public Midnight indexer.
 | `contracts/purchase/` | 151 | Purchase records (v3 — the version running on mainnet). The buyer is written as a commitment, not an identifier, alongside the lot ID and timestamp — so the record shows that GYOTAK recorded the purchase, without exposing who made it. A buyer who chooses to speak publicly can add a binding that records their account handle and referral id. `witnesses.reference.ts` is a reference implementation of the three witnesses that matches their declarations and returns fixed dummy values; the production witnesses are not published while a patent application is being prepared. |
 | `contracts/fish/` | 54 | Records a plaintext fish manifest — up to eight species:weight entries per batch ID — that only the owner can write and no one can overwrite. |
 | `contracts/ratio-log/` | 139 | Yield ratio logging for processing. |
+| `contracts/store-registry/` | 125 | Payout address registration (the version running on mainnet). Maps a store ID to the Ethereum address it is paid at, registered only with a MetaMask signature by that address, which is checked in the circuit (Keccak-256, address recovery, ECDSA). `recordReceipt` writes a purchase ID against a registered store, signed by its address; GYOTAK's payment checks read only the registered addresses. `witnesses.reference.ts` declares the nine witnesses with fixed dummy values that the circuits reject. The comment at the top of the contract still says "Prototype only — not deployed anywhere": it was written before deployment, and the file is kept byte for byte as deployed. |
 
 `history/` holds earlier iterations (catch v1, catch v2, and the original April traceability sketch), kept so the progression is visible rather than squashed.
 
@@ -62,8 +76,21 @@ Anything marked public can be read by anyone from the public Midnight indexer.
 | `temp-log` | **mainnet** | `39847629460066f7a572b1ae55d6c3a900cc347941e34b45c14457ba40f38611` |
 | `komon` | preprod | — |
 | `purchase` (v3) | **mainnet** | `d11d52bd5875ecc2e89e97149e0237db20a91c989f30268950e892655a2a2a57` |
+| `store-registry` | **mainnet** | `b4afdcc3cea1cea929201c0d771c6427b8ebe603009b3f3399a551fb71fb0fb9` |
 
 The catch and temp-log contracts are written to continuously by live operations; purchase is written for each paid order. Since 4 October 2026 (Thailand time) that is one record per order (`schema` 2): its lot ID is the SHA-256 of a manifest that lists the order's items — the catch record ID of each item tied to exactly one catch record, and `no-lot` for any other item (see [Purchase lookup page](#purchase-lookup-page)). Records written before that date have one record for each lot of an order (`schema` 1) and stay as they are. None of it comes from a demo script.
+
+## Checking the store registry against this source
+
+`contracts/store-registry/gyotak-store-registry.compact` is the file the deployed contract was compiled from, unchanged (SHA-256 `0b627ad5ab63c0fc90b9739746b317284a151795df9383eae967bc3fd45504f1`, LF line endings). It was compiled with compactc 0.36.0 (language 0.28.0, runtime 0.21.0). To check it against the contract on mainnet without trusting us:
+
+1. Compile it with the same compiler, keeping the proving keys (no `--skip-zk`; the prover keys are large, about 570 MB per circuit):
+   ```bash
+   cd contracts/store-registry
+   compact compile +0.36.0 gyotak-store-registry.compact managed
+   ```
+2. Read the contract's current state from a public Midnight mainnet indexer, with the GraphQL query `contractAction(address: "b4afdcc3cea1cea929201c0d771c6427b8ebe603009b3f3399a551fb71fb0fb9") { state }`.
+3. Each `managed/keys/<circuit>.verifier` file starts with the 26-byte tag `midnight:verifier-key[v7]:`. The bytes after it (3,295 bytes for each circuit) appear unchanged in the on-chain state, for both `registerStore` and `recordReceipt`. A different source would give different verifier keys.
 
 ## Testing the purchase contract
 

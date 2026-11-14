@@ -1,0 +1,125 @@
+// GYOTAK receipt prototype v2 (compactc 0.36.0). Prototype only — not deployed anywhere.
+//
+// A store proves control of its Ethereum-style payout address by signing with MetaMask
+// personal_sign (EIP-191). The owner (GYOTAK) submits the transactions, but cannot register,
+// re-point or record anything for a store without that store's key:
+//   - registerStore needs a signature by the new payout address, and, when the store is
+//     already registered, also one by the currently registered address;
+//   - recordReceipt needs a signature by the registered address.
+// Both messages name this contract's address and the network, so a signature cannot be
+// replayed against another deployment. Only purchaseId -> storeId and storeId -> address
+// are written to the ledger; keys and signatures stay private.
+//
+// Signed texts (all ASCII; hex is lowercase; IDs are ASCII right-padded with spaces):
+//   "GYOTAK store registration v1\ncontract:<64 hex>\nnetwork:<7>\nstore:<32>\naddress:0x<40 hex>"  (208 bytes)
+//   "GYOTAK receipt v1\ncontract:<64 hex>\nnetwork:<7>\npurchase:<32>"                               (149 bytes)
+
+pragma language_version >= 0.28;
+
+import CompactStandardLibrary;
+
+witness ownerSecret(): Bytes<32>;
+// Lowercase hex of this contract's address and of the payout address; checked in-circuit.
+witness contractHex(): Bytes<64>;
+witness payoutHex(): Bytes<40>;
+// Registration: the new address's key and signature, and the approving key and signature
+// (the currently registered address; on a first registration the new key signs both).
+witness newKey(): Secp256k1Point;
+witness newSignature(): Secp256k1EcdsaSignature;
+witness approvingKey(): Secp256k1Point;
+witness approvingSignature(): Secp256k1EcdsaSignature;
+// Receipt: the registered address's key and signature.
+witness receiptKey(): Secp256k1Point;
+witness receiptSignature(): Secp256k1EcdsaSignature;
+
+export ledger owner: Bytes<32>;
+export sealed ledger network: Bytes<7>;
+// storeId -> 20-byte payout address
+export ledger stores: Map<Bytes<32>, Bytes<20>>;
+// purchaseId -> storeId
+export ledger receipts: Map<Bytes<32>, Bytes<32>>;
+
+constructor(networkName: Bytes<7>) {
+  owner = disclose(ownerKey(ownerSecret()));
+  network = disclose(networkName);
+}
+
+circuit ownerKey(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "gyotak:receipt:owner"), sk]);
+}
+
+circuit assertOwner(): [] {
+  assert(ownerKey(ownerSecret()) == owner, "not owner");
+}
+
+// Value of one lowercase hex digit.
+circuit hexDigit(c: Uint<8>): Field {
+  assert((c >= 48 && c <= 57) || (c >= 97 && c <= 102), "not a lowercase hex digit");
+  return c <= 57 ? (c as Field) - (48 as Field) : (c as Field) - (87 as Field);
+}
+
+circuit assertHex32(hex: Bytes<64>, raw: Bytes<32>): [] {
+  for (const i of 0..32) {
+    assert(hexDigit(hex[2 * i]) * (16 as Field) + hexDigit(hex[2 * i + 1]) == (raw[i] as Field), "hex does not match");
+  }
+}
+
+circuit assertHex20(hex: Bytes<40>, raw: Bytes<20>): [] {
+  for (const i of 0..20) {
+    assert(hexDigit(hex[2 * i]) * (16 as Field) + hexDigit(hex[2 * i + 1]) == (raw[i] as Field), "hex does not match");
+  }
+}
+
+// This contract's address as hex, checked against kernel.self().
+circuit selfHex(): Bytes<64> {
+  const hex = contractHex();
+  assertHex32(hex, kernel.self().bytes);
+  return hex;
+}
+
+// True when `pk` belongs to `addr` and signed `digest`.
+circuit signedBy(digest: Bytes<32>, pk: Secp256k1Point, sig: Secp256k1EcdsaSignature, addr: Bytes<20>): Boolean {
+  return secp256k1EthereumAddress(pk) == addr && secp256k1EcdsaVerify(digest, sig, pk);
+}
+
+export circuit registerStore(storeId: Bytes<32>, payoutAddress: Bytes<20>): [] {
+  assertOwner();
+  const sid = disclose(storeId);
+  const addr = disclose(payoutAddress);
+
+  const hexAddr = payoutHex();
+  assertHex20(hexAddr, addr);
+  const msg = [..."GYOTAK store registration v1\ncontract:", ...selfHex(), ..."\nnetwork:", ...network,
+               ..."\nstore:", ...sid, ..."\naddress:0x", ...hexAddr];
+  const digest = keccak256<Bytes<237>>([..."\x19Ethereum Signed Message:\n208", ...msg] as Bytes<237>);
+
+  // The new payout address must have signed this registration.
+  assert(disclose(signedBy(digest, newKey(), newSignature(), addr)), "not signed by the new payout address");
+
+  // Re-pointing a registered store must also be signed by its current address.
+  const registered = stores.member(sid);
+  const current = registered ? stores.lookup(sid) : addr;
+  assert(disclose(signedBy(digest, approvingKey(), approvingSignature(), current)), "not approved by the current payout address");
+
+  stores.insert(sid, addr);
+}
+
+export circuit recordReceipt(purchaseId: Bytes<32>, storeId: Bytes<32>, timestamp: Uint<64>): [] {
+  assertOwner();
+
+  // Chain time within ±600 s of the given timestamp.
+  const ts = disclose(timestamp);
+  assert(ts >= 600, "timestamp too small");
+  assert(blockTimeGte(ts - 600) && blockTimeLte((ts + 600) as Uint<64>), "timestamp out of range");
+
+  const sid = disclose(storeId);
+  const pid = disclose(purchaseId);
+  assert(stores.member(sid), "store not registered");
+  assert(!receipts.member(pid), "receipt already recorded");
+
+  const msg = [..."GYOTAK receipt v1\ncontract:", ...selfHex(), ..."\nnetwork:", ...network, ..."\npurchase:", ...pid];
+  const digest = keccak256<Bytes<178>>([..."\x19Ethereum Signed Message:\n149", ...msg] as Bytes<178>);
+  assert(disclose(signedBy(digest, receiptKey(), receiptSignature(), stores.lookup(sid))), "not signed by the store's payout address");
+
+  receipts.insert(pid, sid);
+}
